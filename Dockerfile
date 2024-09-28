@@ -26,7 +26,7 @@ COPY src ./src
 COPY models ./models
 
 ## preparing dataset
-# RUN ["python3", "-m", "src.dataset"]
+RUN ["python3", "-m", "src.dataset", "--local"]
 ## predicting
 # RUN ["python3", "-m", "src.modeling.predict"]
 
