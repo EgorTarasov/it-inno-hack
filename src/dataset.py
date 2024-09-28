@@ -1,5 +1,5 @@
 import multiprocessing
-
+import os
 import email_validator
 import pandas as pd
 import phonenumbers
@@ -135,13 +135,10 @@ def preprocess_type_2(df: pd.DataFrame):
     df.rename(columns={"uid": "unique_id"}, inplace=True)
     chunk_size = 1000  # Define the chunk size
     chunks = [df[i : i + chunk_size] for i in range(0, df.shape[0], chunk_size)]
+    print(df.columns)
 
     processed_chunks = []
     for chunk in tqdm(chunks, desc="Processing chunks"):
-
-        chunk.loc[:, ["first_name", "middle_name", "last_name"]] = (
-            chunk["full_name"].apply(preprocess_full_name).apply(pd.Series)
-        )
 
         chunk.loc[:, "birthdate"] = (
             chunk["birthdate"].astype(str).str.replace(r"[^\d\-\/\.]", "", regex=True)
@@ -219,9 +216,9 @@ def load_dfs(clickhouse_uri: str) -> list[pd.DataFrame]:
 
     for i, df in enumerate(dfs):
         with multiprocessing.Pool() as pool:
-            if i == 0:
+            if i == 1:
                 dfs[i] = pool.apply(preprocess_type_2, (df,))
-            elif i == 1:
+            elif i == 2:
                 dfs[i] = pool.apply(preprocess_type_3, (df,))
             else:
                 # Assuming there's a preprocess_type_1 function for the first dataset
@@ -231,30 +228,35 @@ def load_dfs(clickhouse_uri: str) -> list[pd.DataFrame]:
 
 def load_csv(parallel: bool = False) -> list[pd.DataFrame]:
     """Load CSV files from the RAW_DOCKER_DIR directory."""
-    dfs = [
-        pd.read_csv(RAW_DOCKER_DIR / f"{dataset_name}.csv")
-        for dataset_name in ["main1", "main2", "main3"]
+    filenames = [
+        RAW_DOCKER_DIR / f"{dataset_name}.csv" for dataset_name in ["main1", "main2", "main3"]
     ]
-    logger.info("start preprocessing")
+    dfs: list[int | pd.DataFrame] = [0, 0, 0]
+    logger.info(f"start preprocessing in {'parallel' if parallel else ''}")
     if parallel:
-        for i, df in enumerate(dfs):
+        for i, filename in enumerate(filenames):
             with multiprocessing.Pool() as pool:
                 if i == 1:
-                    dfs[i] = pool.apply(preprocess_type_2, (df,))
+                    dfs[i] = pool.apply(preprocess_type_2, (pd.read_csv(filename),))
                 elif i == 2:
-                    dfs[i] = pool.apply(preprocess_type_3, (df,))
+                    dfs[i] = pool.apply(preprocess_type_3, (pd.read_csv(filename),))
                 else:
                     # Assuming there's a preprocess_type_1 function for the first dataset
-                    dfs[i] = pool.apply(preprocess_type_1, (df,))
+                    dfs[i] = pool.apply(preprocess_type_1, (pd.read_csv(filename),))
     else:
-        for i, df in enumerate(dfs):
+        for i, filename in enumerate(filenames):
             if i == 1:
-                dfs[i] = preprocess_type_2(df)
+                dfs[i] = preprocess_type_2(pd.read_csv(filename))
             elif i == 2:
-                dfs[i] = preprocess_type_3(df)
+                dfs[i] = preprocess_type_3(pd.read_csv(filename))
             else:
+                if (PROCESSED_DATA_DIR / filename).exists():
+                    dfs[i] = pd.read_csv(PROCESSED_DATA_DIR / filename)
+                dfs[i] = preprocess_type_1(pd.read_csv(filename))
+                dfs[i].to_csv(PROCESSED_DATA_DIR / filename, index=False)
+                logger.info(f"Preprocessed {filename} saved to {PROCESSED_DATA_DIR}")
                 # Assuming there's a preprocess_type_1 function for the first dataset
-                dfs[i] = preprocess_type_1(df)
+
     return dfs
 
 
@@ -267,8 +269,10 @@ def main(
 ):
     """Preprocessing for the dataset."""
     if local:
+        logger.info("Loading data from local CSV files.")
         dfs = load_csv(parallel)
     elif not clickhouse_uri:
+        logger.error("Please provide a ClickHouse URI.")
         clickhouse_uri = CLICKHOUSE_URI
         # ---- REPLACE THIS WITH YOUR OWN CODE ----
         dfs = load_dfs(clickhouse_uri)
