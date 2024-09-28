@@ -12,10 +12,11 @@ services:
       - ./docker-entrypoint-initdb.d/00_initial_datasets_tables.sh:/docker-entrypoint-initdb.d/00_initial_datasets_tables.sh
     entrypoint: /bin/sh -c "chmod +x /docker-entrypoint-initdb.d/00_initial_datasets_tables.sh && /entrypoint.sh"
   solution:
-    image: solution
+    image: ghcr.io/egortarasov/it-inno-hack:0.1
     build:
       context: ..
       dockerfile: Dockerfile
+    command: "python3 -m src.dataset"
     depends_on:
       - clickhouse
     environment:

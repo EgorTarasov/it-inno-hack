@@ -25,8 +25,9 @@ COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 COPY src ./src
 COPY models ./models
 
-## 
-RUN ["python3", "-m", "src.dataset", "--clickhouse-uri", "clickhouse://default:@10.0.1.80/default"]
+## preparing dataset
+# RUN ["python3", "-m", "src.dataset"]
+## predicting
+# RUN ["python3", "-m", "src.modeling.predict"]
 
-
-ENTRYPOINT ["python", "-m", "src.modeling.predict.py"]
+# ENTRYPOINT ["python", "-m", "src.modeling.predict.py"]
