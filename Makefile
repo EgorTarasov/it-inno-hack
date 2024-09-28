@@ -71,3 +71,12 @@ export PRINT_HELP_PYSCRIPT
 
 help:
 	@$(PYTHON_INTERPRETER) -c "${PRINT_HELP_PYSCRIPT}" < $(MAKEFILE_LIST)
+
+.PHONY: click
+click:
+	docker compose  -f docker/docker-compose.yaml up clickhouse -d
+
+
+.PHONY: compose-down
+compose-down:
+	docker compose  -f docker/docker-compose.yaml down

@@ -17,6 +17,11 @@ tqdm = "^4.66.5"
 splink = "^4.0.2"
 python-dotenv = "^1.0.1"
 matplotlib = "^3.9.2"
+phonenumbers = "^8.13.46"
+email-validator = "^2.2.0"
+natasha = "^1.6.0"
+polars = "^1.8.2"
+clickhouse-connect = "^0.8.0"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.11.2"
