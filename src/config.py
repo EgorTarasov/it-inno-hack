@@ -2,6 +2,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
+import os
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -20,6 +21,8 @@ MODELS_DIR = PROJ_ROOT / "models"
 
 REPORTS_DIR = PROJ_ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "figures"
+
+CLICKHOUSE_URI = os.getenv("CLICKHOUSE_URI", "clickhouse://localhost:9000")
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

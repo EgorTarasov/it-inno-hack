@@ -29,14 +29,14 @@ clean:
 ## Lint using flake8 and black (use `make format` to do formatting)
 .PHONY: lint
 lint:
-	flake8 record_linkage
-	isort --check --diff --profile black record_linkage
-	black --check --config pyproject.toml record_linkage
+	flake8 src
+	isort --check --diff --profile black src
+	black --check --config pyproject.toml src
 
 ## Format source code with black
 .PHONY: format
 format:
-	black --config pyproject.toml record_linkage
+	black --config pyproject.toml src
 
 
 
@@ -51,7 +51,7 @@ format:
 ## Make Dataset
 .PHONY: data
 data: requirements
-	$(PYTHON_INTERPRETER) record_linkage/dataset.py
+	$(PYTHON_INTERPRETER) src/dataset.py
 
 
 #################################################################################
@@ -71,3 +71,12 @@ export PRINT_HELP_PYSCRIPT
 
 help:
 	@$(PYTHON_INTERPRETER) -c "${PRINT_HELP_PYSCRIPT}" < $(MAKEFILE_LIST)
+
+.PHONY: click
+click:
+	docker compose  -f docker/docker-compose.yaml up clickhouse -d
+
+
+.PHONY: compose-down
+compose-down:
+	docker compose  -f docker/docker-compose.yaml down
