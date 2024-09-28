@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 
 import pandas as pd
 
-from src.config import CLICKHOUSE_URI, RAW_DATA_DIR, RAW_DOCKER_DIR
+from src.config import CLICKHOUSE_URI, RAW_DATA_DIR, RAW_DOCKER_DIR, PROCESSED_DATA_DIR
 
 
 app = typer.Typer()
@@ -201,43 +201,53 @@ def load_dfs(clickhouse_uri: str) -> list[pd.DataFrame]:
     return dfs
 
 
-def load_csv():
+def load_csv(parallel: bool = False) -> list[pd.DataFrame]:
+    """Load CSV files from the RAW_DOCKER_DIR directory."""
     dfs = [
         pd.read_csv(RAW_DOCKER_DIR / f"{dataset_name}.csv")
         for dataset_name in ["main1", "main2", "main3"]
     ]
 
-    for i, df in enumerate(dfs):
-        with multiprocessing.Pool() as pool:
-            if i == 0:
-                dfs[i] = pool.apply(preprocess_type_2, (df,))
-            elif i == 1:
-                dfs[i] = pool.apply(preprocess_type_3, (df,))
+    if parallel:
+        for i, df in enumerate(dfs):
+            with multiprocessing.Pool() as pool:
+                if i == 1:
+                    dfs[i] = pool.apply(preprocess_type_2, (df,))
+                elif i == 2:
+                    dfs[i] = pool.apply(preprocess_type_3, (df,))
+                else:
+                    # Assuming there's a preprocess_type_1 function for the first dataset
+                    dfs[i] = pool.apply(preprocess_type_1, (df,))
+    else:
+        for i, df in enumerate(dfs):
+            if i == 1:
+                dfs[i] = preprocess_type_2(df)
+            elif i == 2:
+                dfs[i] = preprocess_type_3(df)
             else:
                 # Assuming there's a preprocess_type_1 function for the first dataset
-                dfs[i] = pool.apply(preprocess_type_1, (df,))
+                dfs[i] = preprocess_type_1(df)
+    return dfs
 
 
 @app.command()
 def main(
     local: bool = typer.Option(False, help="Load data from local CSV files."),
+    parallel: bool = typer.Option(False, help="Enable parallel processing."),
     clickhouse_uri: str = typer.Option("", help="ClickHouse URI."),
     dataset_name: str = typer.Option("dataset", help="Name of the dataset."),
 ):
     """Preprocessing for the dataset."""
     if local:
-        load_csv()
-        return
-
-    if not clickhouse_uri:
+        dfs = load_csv(parallel)
+    elif not clickhouse_uri:
         clickhouse_uri = CLICKHOUSE_URI
-
-    # ---- REPLACE THIS WITH YOUR OWN CODE ----
-    dfs = load_dfs(clickhouse_uri)
+        # ---- REPLACE THIS WITH YOUR OWN CODE ----
+        dfs = load_dfs(clickhouse_uri)
 
     # concatenate all dataframes into one
     df = pd.concat(dfs, ignore_index=True)
-    df.to_csv(RAW_DATA_DIR / f"{dataset_name}.csv", index=False)
+    df.to_csv(PROCESSED_DATA_DIR / f"{dataset_name}.csv", index=False)
 
     logger.info("Data loaded successfully.")
 
