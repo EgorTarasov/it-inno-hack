@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 
 import pandas as pd
 
-from src.config import CLICKHOUSE_URI
+from src.config import CLICKHOUSE_URI, RAW_DATA_DIR
 
 
 app = typer.Typer()
@@ -177,17 +177,7 @@ def preprocess_type_3(df: pd.DataFrame):
     return df
 
 
-@app.command()
-def main(
-    clickhouse_uri: str = typer.Option("", help="ClickHouse URI."),
-):
-    """Preprocessing for the dataset."""
-
-    if not clickhouse_uri:
-        clickhouse_uri = CLICKHOUSE_URI
-
-    # ---- REPLACE THIS WITH YOUR OWN CODE ----
-
+def load_dfs(clickhouse_uri: str) -> list[pd.DataFrame]:
     engine = create_engine(clickhouse_uri)
 
     query = "SELECT * FROM {table_name} TabSeparatedWithNamesAndTypes"
@@ -205,6 +195,25 @@ def main(
             else:
                 # Assuming there's a preprocess_type_1 function for the first dataset
                 dfs[i] = pool.apply(preprocess_type_1, (df,))
+    return dfs
+
+
+@app.command()
+def main(
+    clickhouse_uri: str = typer.Option("", help="ClickHouse URI."),
+):
+    """Preprocessing for the dataset."""
+
+    if not clickhouse_uri:
+        clickhouse_uri = CLICKHOUSE_URI
+
+    # ---- REPLACE THIS WITH YOUR OWN CODE ----
+    dfs = load_dfs(clickhouse_uri)
+
+    for i, df in enumerate(dfs):
+        df.to_csv(RAW_DATA_DIR / f"dataset_{i + 1}.csv", index=False)
+
+    logger.info("Data loaded successfully.")
 
 
 # -----------------------------------------
