@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 
 import pandas as pd
 
-from src.config import CLICKHOUSE_URI, RAW_DATA_DIR
+from src.config import CLICKHOUSE_URI, RAW_DATA_DIR, RAW_DOCKER_DIR
 
 
 app = typer.Typer()
@@ -72,7 +72,8 @@ def parse_date(date_str: str):
         year, month, day = date_str.split("-")
     except ValueError:
         return None
-
+    if len(year) < 1:
+        return
     if len(year) == 2:
         if int(year) > 21:
             year = "19" + year
@@ -83,12 +84,14 @@ def parse_date(date_str: str):
             year = "1" + year
         else:
             year = "2" + year
-
+    if len(month) < 1:
+        return
     if len(month) == 1 and month != "0":
         month = "0" + month
     elif not 1 < int(month) < 12:
         month = "01"
-
+    if len(day) < 1:
+        return
     if len(day) == 1 and day != "0":
         day = "0" + day
     elif not 1 < int(day) < 31:
@@ -198,11 +201,33 @@ def load_dfs(clickhouse_uri: str) -> list[pd.DataFrame]:
     return dfs
 
 
+def load_csv():
+    dfs = [
+        pd.read_csv(RAW_DOCKER_DIR / f"{dataset_name}.csv")
+        for dataset_name in ["main1", "main2", "main3"]
+    ]
+
+    for i, df in enumerate(dfs):
+        with multiprocessing.Pool() as pool:
+            if i == 0:
+                dfs[i] = pool.apply(preprocess_type_2, (df,))
+            elif i == 1:
+                dfs[i] = pool.apply(preprocess_type_3, (df,))
+            else:
+                # Assuming there's a preprocess_type_1 function for the first dataset
+                dfs[i] = pool.apply(preprocess_type_1, (df,))
+
+
 @app.command()
 def main(
+    local: bool = typer.Option(False, help="Load data from local CSV files."),
     clickhouse_uri: str = typer.Option("", help="ClickHouse URI."),
+    dataset_name: str = typer.Option("dataset", help="Name of the dataset."),
 ):
     """Preprocessing for the dataset."""
+    if local:
+        load_csv()
+        return
 
     if not clickhouse_uri:
         clickhouse_uri = CLICKHOUSE_URI
@@ -210,13 +235,11 @@ def main(
     # ---- REPLACE THIS WITH YOUR OWN CODE ----
     dfs = load_dfs(clickhouse_uri)
 
-    for i, df in enumerate(dfs):
-        df.to_csv(RAW_DATA_DIR / f"dataset_{i + 1}.csv", index=False)
+    # concatenate all dataframes into one
+    df = pd.concat(dfs, ignore_index=True)
+    df.to_csv(RAW_DATA_DIR / f"{dataset_name}.csv", index=False)
 
     logger.info("Data loaded successfully.")
-
-
-# -----------------------------------------
 
 
 if __name__ == "__main__":

@@ -12,9 +12,8 @@ app = typer.Typer()
 @app.command()
 def main(
     # ---- REPLACE DEFAULT PATHS AS APPROPRIATE ----
-    features_path: Path = PROCESSED_DATA_DIR / "features.csv",
-    labels_path: Path = PROCESSED_DATA_DIR / "labels.csv",
-    model_path: Path = MODELS_DIR / "model.pkl",
+    features_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
+    model_path: Path = MODELS_DIR / "model.json",
     # -----------------------------------------
 ):
     # ---- REPLACE THIS WITH YOUR OWN CODE ----
