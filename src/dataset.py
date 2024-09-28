@@ -1,24 +1,21 @@
 import multiprocessing
 
 import email_validator
+import pandas as pd
 import phonenumbers
 import typer
 from loguru import logger
-
-
-import pandas as pd
 from sqlalchemy import create_engine
+from tqdm import tqdm
 
-import pandas as pd
-
-from src.config import CLICKHOUSE_URI, RAW_DATA_DIR, RAW_DOCKER_DIR, PROCESSED_DATA_DIR
-
+from src.config import CLICKHOUSE_URI, PROCESSED_DATA_DIR, RAW_DOCKER_DIR
+from datetime import datetime
 
 app = typer.Typer()
 
 
 def preprocess_full_name(full_name: str) -> tuple[str, str, str]:
-    """Preprocesses a full name string by splitting it into first, middle, and last names."""
+    """Processes a full name string by splitting it into first, middle, and last names."""
     parts = full_name.lower().split()
     if len(parts) >= 3:
         return parts[0], " ".join(parts[1:-1]), parts[-1]
@@ -61,58 +58,73 @@ def preprocess_email(email: str) -> str | None:
     """Preprocess email. if email is not valid, return None. to not disturb the pipeline."""
     try:
         return email_validator.validate_email(email, check_deliverability=False).email
-    except email_validator.EmailNotValidError:
+    except Exception as e:
         return None
 
 
-def parse_date(date_str: str):
-    """approximate date format: YYYY-MM-DD"""
+def parse_date(date_str: str) -> str | None:
+    """Approximate date format: YYYY-MM-DD"""
     date_str = date_str.strip()
     try:
-        year, month, day = date_str.split("-")
+        # Attempt to parse the date string directly
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+        return date_obj.strftime("%Y-%m-%d")
     except ValueError:
-        return None
-    if len(year) < 1:
-        return
-    if len(year) == 2:
-        if int(year) > 21:
-            year = "19" + year
-        else:
-            year = "20" + year
-    elif len(year) == 3:
-        if int(year[:0]) == 9:
-            year = "1" + year
-        else:
-            year = "2" + year
-    if len(month) < 1:
-        return
-    if len(month) == 1 and month != "0":
-        month = "0" + month
-    elif not 1 < int(month) < 12:
-        month = "01"
-    if len(day) < 1:
-        return
-    if len(day) == 1 and day != "0":
-        day = "0" + day
-    elif not 1 < int(day) < 31:
-        day = "01"
+        pass
 
-    return f"{year}-{month}-{day}"
+    try:
+        # Handle cases where year, month, or day might be incomplete
+        parts = date_str.split("-")
+        if len(parts) != 3:
+            return None
+
+        year, month, day = parts
+
+        # Normalize year
+        if len(year) == 2:
+            year = "19" + year if int(year) > 21 else "20" + year
+        elif len(year) == 3:
+            year = "1" + year if year.startswith("9") else "2" + year
+        elif len(year) != 4:
+            return None
+
+        # Normalize month
+        if len(month) == 1:
+            month = "0" + month
+        elif not (1 <= int(month) <= 12):
+            return None
+
+        # Normalize day
+        if len(day) == 1:
+            day = "0" + day
+        elif not (1 <= int(day) <= 31):
+            return None
+
+        return f"{year}-{month}-{day}"
+    except Exception:
+        return None
 
 
 def preprocess_type_1(df: pd.DataFrame):
     """Preprocess for type 1 dataset."""
     logger.info("Preprocessing type 1 dataset.")
-
-    df[["first_name", "middle_name", "last_name"]] = (
-        df["full_name"].apply(preprocess_full_name).apply(pd.Series)
-    )
-
-    df.drop(columns=["full_name"], inplace=True)
-    df["phone"] = df["phone"].apply(preprocess_phone_number)
-    df["email"] = df["email"].apply(preprocess_email)
-    # rename column uid to unique_id
     df.rename(columns={"uid": "unique_id"}, inplace=True)
+    chunk_size = 1000  # Define the chunk size
+    chunks = [df[i : i + chunk_size] for i in range(0, df.shape[0], chunk_size)]
+
+    processed_chunks = []
+    for chunk in tqdm(chunks, desc="Processing chunks"):
+        chunk.loc[:, ["first_name", "middle_name", "last_name"]] = (
+            chunk["full_name"].apply(preprocess_full_name).apply(pd.Series)
+        )
+
+        chunk.loc[:, "phone"] = chunk["phone"].apply(preprocess_phone_number)
+        chunk.loc[:, "email"] = chunk["email"].apply(preprocess_email)
+
+        processed_chunks.append(chunk)
+    df.drop(columns=["full_name"], inplace=True)
+    df = pd.concat(processed_chunks, ignore_index=True)
+
     logger.success("Preprocessing type 1 dataset complete.")
     return df
 
@@ -121,23 +133,31 @@ def preprocess_type_2(df: pd.DataFrame):
     """Preprocess for type 2 dataset."""
     logger.info("Preprocessing type 2 dataset.")
     df.rename(columns={"uid": "unique_id"}, inplace=True)
+    chunk_size = 1000  # Define the chunk size
+    chunks = [df[i : i + chunk_size] for i in range(0, df.shape[0], chunk_size)]
 
-    df[["first_name", "middle_name", "last_name"]] = (
-        df["full_name"].apply(preprocess_full_name).apply(pd.Series)
-    )
+    processed_chunks = []
+    for chunk in tqdm(chunks, desc="Processing chunks"):
 
+        chunk.loc[:, ["first_name", "middle_name", "last_name"]] = (
+            chunk["full_name"].apply(preprocess_full_name).apply(pd.Series)
+        )
+
+        chunk.loc[:, "birthdate"] = (
+            chunk["birthdate"].astype(str).str.replace(r"[^\d\-\/\.]", "", regex=True)
+        )
+        chunk.loc[:, "birthdate"] = chunk["birthdate"].apply(parse_date)
+
+        chunk.loc[:, "phone"] = chunk["phone"].astype(str).str.replace(r"\D", "", regex=True)
+        chunk.loc[:, "phone"] = chunk["phone"].apply(preprocess_phone_number)
+
+        chunk.loc[:, "address"] = chunk["address"].astype(str).str.replace(r"\n", " ", regex=True)
+        chunk.loc[:, "address"] = chunk["address"].str.replace(r"\s+", " ", regex=True).str.strip()
+
+        processed_chunks.append(chunk)
+
+    df = pd.concat(processed_chunks, ignore_index=True)
     df.drop(columns=["full_name"], inplace=True)
-
-    df["birthdate"] = df["birthdate"].astype(str).str.replace(r"[^\d\-\/\.]", "", regex=True)
-
-    df["birthdate"] = df["birthdate"].apply(parse_date)
-
-    df["phone"] = df["phone"].astype(str).str.replace(r"\D", "", regex=True)
-
-    df["phone"] = df["phone"].apply(preprocess_phone_number)
-
-    df["address"] = df["address"].astype(str).str.replace(r"\n", " ", regex=True)
-    df["address"] = df["address"].str.replace(r"\s+", " ", regex=True).str.strip()
 
     logger.success("Preprocessing type 2 dataset complete.")
     return df
@@ -145,36 +165,44 @@ def preprocess_type_2(df: pd.DataFrame):
 
 def preprocess_type_3(df: pd.DataFrame):
     """Preprocess for type 3 dataset."""
-    logger.info("Preprocessing type 2 dataset.")
-
+    logger.info("Preprocessing type 3 dataset.")
     df.rename(columns={"uid": "unique_id"}, inplace=True)
+    chunk_size = 1000  # Define the chunk size
+    chunks = [df[i : i + chunk_size] for i in range(0, df.shape[0], chunk_size)]
 
-    # df['name'] = df[['first_name', 'middle_name', 'last_name']].fillna('').agg(' '.join, axis=1)
-    df["name"] = df["name"].str.replace(r"\s+", " ", regex=True).str.strip()
-    df["name"] = df["name"].str.replace(r"[^A-Za-zА-Яа-яЁё\s\-]", "", regex=True)
+    processed_chunks = []
+    for chunk in tqdm(chunks, desc="Processing chunks"):
 
-    def split_name(full_name):
-        parts = full_name.split()
-        if len(parts) >= 3:
-            return parts[0], " ".join(parts[1:-1]), parts[-1]
-        elif len(parts) == 2:
-            return parts[0], "", parts[1]
-        elif len(parts) == 1:
-            return parts[0], "", ""
-        else:
-            return "", "", ""
+        chunk.loc[:, "name"] = chunk["name"].str.replace(r"\s+", " ", regex=True).str.strip()
+        chunk.loc[:, "name"] = chunk["name"].str.replace(r"[^A-Za-zА-Яа-яЁё\s\-]", "", regex=True)
 
-    name_splits = df["name"].apply(split_name)
-    df["first_name"], df["middle_name"], df["last_name"] = zip(*name_splits)
+        def split_name(full_name):
+            parts = full_name.split()
+            if len(parts) >= 3:
+                return parts[0], " ".join(parts[1:-1]), parts[-1]
+            elif len(parts) == 2:
+                return parts[0], "", parts[1]
+            elif len(parts) == 1:
+                return parts[0], "", ""
+            else:
+                return "", "", ""
 
-    for col in ["first_name", "middle_name", "last_name"]:
-        df[col] = df[col].str.title().str.strip()
+        name_splits = chunk["name"].apply(split_name)
+        chunk.loc[:, "first_name"], chunk.loc[:, "middle_name"], chunk.loc[:, "last_name"] = zip(
+            *name_splits
+        )
 
+        for col in ["first_name", "middle_name", "last_name"]:
+            chunk.loc[:, col] = chunk[col].str.title().str.strip()
+
+        chunk.loc[:, "birthdate"] = (
+            chunk["birthdate"].astype(str).str.replace(r"[^\d\-\/\.]", "", regex=True)
+        )
+        chunk.loc[:, "birthdate"] = chunk["birthdate"].apply(parse_date)
+
+        processed_chunks.append(chunk)
     df.drop(columns=["name"], inplace=True)
-
-    df["birthdate"] = df["birthdate"].astype(str).str.replace(r"[^\d\-\/\.]", "", regex=True)
-
-    df["birthdate"] = df["birthdate"].apply(parse_date)
+    df = pd.concat(processed_chunks, ignore_index=True)
 
     logger.success("Preprocessing type 3 dataset complete.")
     return df
@@ -207,7 +235,7 @@ def load_csv(parallel: bool = False) -> list[pd.DataFrame]:
         pd.read_csv(RAW_DOCKER_DIR / f"{dataset_name}.csv")
         for dataset_name in ["main1", "main2", "main3"]
     ]
-
+    logger.info("start preprocessing")
     if parallel:
         for i, df in enumerate(dfs):
             with multiprocessing.Pool() as pool:
